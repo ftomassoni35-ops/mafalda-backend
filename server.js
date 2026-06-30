@@ -70,9 +70,8 @@ app.post('/api/pedido', async (req, res) => {
 });
 
 // Esto permite que use el puerto de internet, o el 3000 si estás en tu PC
-const PORT = process.env.PORT || 3000;
+const puertoServer = process.env.PORT || 3000;
 
-app.listen(PORT, () => {
-    console.log(`Servidor backend corriendo en el puerto ${PORT}`);
+app.listen(puertoServer, () => {
+    console.log(`Servidor backend corriendo en el puerto ${puertoServer}`);
 });
-    
