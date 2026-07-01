@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { Resend } = require('resend');
 const multer = require('multer'); 
-const { GoogleGenAI } = require('@google/generative-ai'); // Sumamos la librería oficial de Google
+const { GoogleGenAI } = require('@google/generative-ai');
 
 const app = express();
 
@@ -14,7 +14,7 @@ const resend = new Resend('re_i9fDNs1y_BGNX2YABPXtWuQDCFB7AnVf2');
 
 // Inicializamos la IA de Google usando una variable de entorno segura
 const aiToken = process.env.GEMINI_API_KEY;
-const ai = aiToken ? new GoogleGenAI({ apiKey: aiToken }) : null;
+const ai = aiToken ? new GoogleGenAI(aiToken) : null;
 
 // CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria para procesarla
 const storage = multer.memoryStorage();
