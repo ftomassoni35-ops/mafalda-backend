@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { Resend } = require('resend');
 const multer = require('multer'); 
-const { GoogleGenAI } = require('@google/generative-ai');
+const { GoogleGenerativeAI } = require('@google/generative-ai'); // Inicialización corregida
 
 const app = express();
 
@@ -12,9 +12,9 @@ app.use(express.json());
 // CONFIGURACIÓN DE APIS (Mantenemos tu clave intacta de Resend)
 const resend = new Resend('re_i9fDNs1y_BGNX2YABPXtWuQDCFB7AnVf2');
 
-// Inicializamos la IA de Google usando una variable de entorno segura
+// Inicializamos la IA de Google usando la clase oficial correcta
 const aiToken = process.env.GEMINI_API_KEY;
-const ai = aiToken ? new GoogleGenAI(aiToken) : null;
+const ai = aiToken ? new GoogleGenerativeAI(aiToken) : null;
 
 // CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria para procesarla
 const storage = multer.memoryStorage();
@@ -75,11 +75,9 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                         }
                     `;
 
-                    // Llamamos al modelo ultrarrápido y potente de Google
-                    const responseAI = await ai.models.generateContent({
-                        model: 'gemini-2.5-flash',
-                        contents: [promptValidacion, parteImagen],
-                    });
+                    // Llamada corregida utilizando la SDK oficial actual de Google
+                    const modelo = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                    const responseAI = await modelo.generateContent([promptValidacion, parteImagen]);
 
                     const respuestaTexto = responseAI.response.text().trim();
                     // Limpiamos posibles formatos de bloque si la IA responde con ```json
@@ -100,7 +98,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
 
                 } catch (errErrorAI) {
                     console.error("Error crítico procesando con Gemini:", errErrorAI);
-                    // Si la IA falla por algún motivo externo temporal, dejamos pasar el pedido para no bloquear tu venta, pero te avisa en consola
+                    // Si la IA falla por algún motivo externo temporal, dejamos pasar el pedido para no bloquear tu venta
                 }
             }
         }
