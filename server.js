@@ -130,7 +130,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                 <td align="center" style="background-color: #FDFBF7; padding: 28px 20px; border-top: 1px solid #F5F0E6; font-size: 13px; color: #777777;">
                                     <p style="margin: 0 0 4px 0; font-weight: bold; color: #2C2520; letter-spacing: 0.3px;">Mafalda's Chipa Factory</p>
                                     <p style="margin: 0 0 12px 0; font-weight: 300;">Roldán, Santa Fe, Argentina</p>
-                                    <p style="margin: 0; font-size: 12px; color: #999999; font-weight: 300;">Ante cualquier duda inmediata, respondé este e-mail o contactanos vía WhatsApp al <strong>+54 341 3 525720</strong>.</p>
+                                    <p style="margin: 0; font-size: 12px; color: #999999; font-weight: 300;">Ante cualquier duda inmediata, podes mandar un e-mail a chipa.mafalda@gmail.com o contactanos vía WhatsApp al <strong>+54 341 3 525720</strong>.</p>. \n\n(No olvides revisar las preguntas frecuentes colhadas en la pagina)
                                 </td>
                             </tr>
 
