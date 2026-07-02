@@ -2,7 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const { Resend } = require('resend');
 const multer = require('multer'); 
-const { GoogleGenerativeAI } = require('@google/generative-ai'); // Inicialización corregida
+const { GoogleGenerativeAI } = require('@google/generative-ai'); 
 
 const app = express();
 
@@ -15,6 +15,9 @@ const resend = new Resend('re_i9fDNs1y_BGNX2YABPXtWuQDCFB7AnVf2');
 // Inicializamos la IA de Google usando la clase oficial correcta
 const aiToken = process.env.GEMINI_API_KEY;
 const ai = aiToken ? new GoogleGenerativeAI(aiToken) : null;
+
+// URL de tu Apps Script de Google Sheets cargada desde Render
+const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL;
 
 // CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria para procesarla
 const storage = multer.memoryStorage();
@@ -31,7 +34,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
         }
 
         // ==========================================
-        // 🔥 MOTOR DE VALIDACIÓN CON IA (GEMINI)
+        // 🔥 MOTOR DE VALIDACIÓN CON IA (GEMINI) + ANTI-DUPLICADOS
         // ==========================================
         if ((cliente.pago === 'transferencia' || cliente.pago === 'mercadopago')) {
             if (!req.file) {
@@ -75,12 +78,11 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                         }
                     `;
 
-                    // Llamada corregida utilizando la SDK oficial actual de Google
+                    // Llamada utilizando la SDK oficial actual de Google
                     const modelo = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
                     const responseAI = await modelo.generateContent([promptValidacion, parteImagen]);
 
                     const respuestaTexto = responseAI.response.text().trim();
-                    // Limpiamos posibles formatos de bloque si la IA responde con ```json
                     const jsonLimpio = respuestaTexto.replace(/^```json/, '').replace(/```$/, '').trim();
                     const resultadoIA = JSON.parse(jsonLimpio);
 
@@ -93,12 +95,40 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                         });
                     }
 
-                    // Log informativo para verificar qué ID procesó y evitar duplicaciones manuales
                     console.log(`✓ Pago verificado exitosamente por IA. ID Operación: ${resultadoIA.idTransaccion}`);
 
+                    // 🛑 AQUÍ EL BLOQUEO: CONTROL DE DUPLICADO CONTRA GOOGLE DRIVE
+                    if (resultadoIA.idTransaccion && resultadoIA.idTransaccion !== "vacío" && sheetScriptUrl) {
+                        
+                        // 1. Preguntamos a la App Script si ya vio ese ID
+                        const checkRes = await fetch(sheetScriptUrl, {
+                            method: 'POST',
+                            body: JSON.stringify({ action: 'check', idTransaccion: resultadoIA.idTransaccion }),
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+                        const checkJson = await checkRes.json();
+
+                        // 2. Si ya existía en la planilla, cortamos el pedido acá
+                        if (checkJson.existe) {
+                            return res.status(400).json({ 
+                                ok: false, 
+                                mensaje: 'Comprobante rechazado: Este comprobante de pago ya fue utilizado en un pedido anterior. Operación duplicada.' 
+                            });
+                        }
+
+                        // 3. Si no existía, lo registramos para que nadie más pueda usarlo
+                        await fetch(sheetScriptUrl, {
+                            method: 'POST',
+                            body: JSON.stringify({ action: 'save', idTransaccion: resultadoIA.idTransaccion }),
+                            headers: { 'Content-Type': 'application/json' }
+                        });
+
+                        console.log(`✓ ID guardado con éxito en la planilla.`);
+                    }
+
                 } catch (errErrorAI) {
-                    console.error("Error crítico procesando con Gemini:", errErrorAI);
-                    // Si la IA falla por algún motivo externo temporal, dejamos pasar el pedido para no bloquear tu venta
+                    console.error("Error crítico procesando con Gemini o la Planilla:", errErrorAI);
+                    // Dejamos pasar si algo falla externamente para no trabar la venta
                 }
             }
         }
@@ -136,21 +166,18 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                 <tr>
                     <td align="center">
                         <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border: 1px solid #F5F0E6; border-radius: 16px; overflow: hidden; box-shadow: 0 4px 12px rgba(0,0,0,0.03);">
-                            
                             <tr>
                                 <td align="center" style="background-color: #2C2520; padding: 32px 20px;">
                                     <h1 style="margin: 0; color: #E65C00; font-size: 34px; font-weight: bold; letter-spacing: 1px; font-family: 'Playfair Display', Georgia, serif;">Mafalda's <span style="color: #ffffff; font-size: 18px; tracking: 2px; font-family: Arial, sans-serif; text-transform: uppercase; font-weight: 900;">Chipa</span></h1>
                                     <p style="margin: 6px 0 0 0; color: #F5F0E6; font-size: 14px; font-style: italic; font-weight: 300; opacity: 0.8;">...del horno al corazón</p>
                                 </td>
                             </tr>
-
                             <tr>
                                 <td style="padding: 40px 35px;">
                                     <h2 style="margin: 0 0 16px 0; color: #2C2520; font-size: 22px; font-weight: bold;">¡Hola, ${cliente.razonSocial}!</h2>
                                     <p style="margin: 0 0 28px 0; color: #555555; font-size: 15px; line-height: 1.6; font-weight: 300;">
                                         Recibimos tu solicitud de pedido mayorista correctamente. Nuestro equipo ya está validando el stock de fábrica para preparar tu orden y despacharla respetando estrictamente la cadena de frío.
                                     </p>
-
                                     <div style="background-color: #F5F0E6; border-radius: 14px; padding: 22px; margin-bottom: 28px;">
                                         <h3 style="margin: 0 0 14px 0; color: #E65C00; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px;">Resumen de Compra (${numeroOrden})</h3>
                                         <table border="0" cellpadding="0" cellspacing="0" width="100%">
@@ -169,30 +196,21 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                             </tbody>
                                         </table>
                                     </div>
-
                                     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 28px; font-size: 14px; color: #444444; line-height: 1.6; border-left: 3px solid #F5F0E6; padding-left: 14px;">
-                                        <tr>
-                                            <td><strong>Dirección de Entrega:</strong> ${cliente.direccion}, ${cliente.ciudad} (CP: ${cliente.cp})</td>
-                                        </tr>
-                                        <tr>
-                                            <td style="padding-top: 4px;"><strong>Forma de Pago:</strong> ${cliente.pago.toUpperCase()}</td>
-                                        </tr>
+                                        <tr><td><strong>Dirección de Entrega:</strong> ${cliente.direccion}, ${cliente.ciudad} (CP: ${cliente.cp})</td></tr>
+                                        <tr><td style="padding-top: 4px;"><strong>Forma de Pago:</strong> ${cliente.pago.toUpperCase()}</td></tr>
                                         ${cliente.notes ? `<tr><td style="padding-top: 10px; font-style: italic; color: #777777;"><strong>Notas adjuntas:</strong> "${cliente.notes}"</td></tr>` : ''}
                                     </table>
-
                                     ${req.file ? `
                                     <div style="background-color: #EBF7EE; border: 1px solid #D1EAD6; border-radius: 8px; padding: 12px 16px; margin-bottom: 28px; color: #1E5128; font-size: 13.5px; font-weight: 500;">
                                         ✓ Captura del comprobante de pago vinculada, auditada por sistema y adjuntada correctamente a este correo.
-                                    </div>
-                                    ` : ''}
-
+                                    </div>` : ''}
                                     <p style="margin: 0 0 10px 0; color: #2C2520; font-size: 14px; font-weight: bold;">¿Cómo sigue tu pedido?</p>
                                     <p style="margin: 0; color: #555555; font-size: 14px; line-height: 1.6; font-weight: 300;">
                                         Nos comunicaremos con vos al teléfono <strong>${cliente.telefono}</strong> para pactar el día exacto y el rango horario en el que nuestro transporte dejará la mercadería en tu negocio.
                                     </p>
                                 </td>
                             </tr>
-
                             <tr>
                                 <td align="center" style="background-color: #FDFBF7; padding: 28px 20px; border-top: 1px solid #F5F0E6; font-size: 13px; color: #777777;">
                                     <p style="margin: 0 0 4px 0; font-weight: bold; color: #2C2520; letter-spacing: 0.3px;">Mafalda's Chipa Factory</p>
@@ -200,7 +218,6 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                     <p style="margin: 0; font-size: 12px; color: #999999; font-weight: 300;">Ante cualquier duda inmediata, podes mandar un e-mail a chipa.mafalda@gmail.com o contactanos vía WhatsApp al <strong>+54 341 3 525720</strong>.</p>
                                 </td>
                             </tr>
-
                         </table>
                     </td>
                 </tr>
