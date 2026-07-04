@@ -9,7 +9,7 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// CONFIGURACIÓN DE APIS (Mantenemos tu clave intacta de Resend)
+// CONFIGURACIÓN DE APIS
 const resend = new Resend('re_i9fDNs1y_BGNX2YABPXtWuQDCFB7AnVf2');
 
 // Inicializamos la IA de Google usando la clase oficial correcta
@@ -44,91 +44,83 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
             if (!ai) {
                 console.error("⚠️ Alerta: GEMINI_API_KEY no configurada en Render. Se saltea validación de IA.");
             } else {
-                try {
-                    // Convertimos el buffer de Multer al formato estructurado que pide Google
-                    const parteImagen = {
-                        inlineData: {
-                            data: req.file.buffer.toString("base64"),
-                            mimeType: req.file.mimetype
-                        },
-                    };
+                // Convertimos el buffer de Multer al formato estructurado que pide Google
+                const parteImagen = {
+                    inlineData: {
+                        data: req.file.buffer.toString("base64"),
+                        mimeType: req.file.mimetype
+                    },
+                };
 
-                    // Conseguimos la fecha actual en la zona horaria de Argentina para comparar
-                    const fechaHoyArg = new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
+                // Conseguimos la fecha actual en la zona horaria de Argentina para comparar
+                const fechaHoyArg = new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
 
-                    const promptValidacion = `
-                        Actúa como un sistema experto de auditoría financiera para la fábrica "Mafalda's Chipa". 
-                        Analiza detalladamente esta imagen de comprobante de pago electrónico proveniente de cualquier banco o billetera virtual.
-                        
-                        Datos de control esperados:
-                        - Monto esperado: ${total} (Verifica que coincida numéricamente con los pesos impresos).
-                        - Destinatario válido: Debe tener como destino a Franco Tomassoni, o los alias "mafalda.chipa" o "chipa.mafalda".
-                        - Fecha de hoy en Argentina: ${fechaHoyArg} (El comprobante debe ser de hoy o como máximo del día anterior).
+                const promptValidacion = `
+                    Actúa como un systema experto de auditoría financiera para la fábrica "Mafalda's Chipa". 
+                    Analiza detalladamente esta imagen de comprobante de pago electrónico proveniente de cualquier banco o billetera virtual.
+                    
+                    Datos de control esperados:
+                    - Monto esperado: ${total} (Verifica que coincida numéricamente con los pesos impresos).
+                    - Destinatario válido: Debe tener como destino a Franco Tomassoni, o los alias "mafalda.chipa" o "chipa.mafalda".
+                    - Fecha de hoy en Argentina: ${fechaHoyArg} (El comprobante debe ser de hoy o como máximo del día anterior).
 
-                        Tu tarea:
-                        1. Determina con total seguridad si el documento es legítimamente un comprobante de transferencia o pago exitoso.
-                        2. Extrae obligatoriamente el número de comprobante, ID de transacción o número de operación único.
-                        3. Verifica que los datos coincidan (Monto coincidente, Destinatario correcto, y Fecha/Hora del día de hoy en curso).
-                        
-                        Responde estrictamente en formato JSON con la siguiente estructura, sin agregar texto extra, formato markdown o bloques de código:
-                        {
-                            "esValido": true o false,
-                            "idTransaccion": "código extraído o vacío",
-                            "motivoRechazo": "Explicación breve y concisa en español si esValido es false, de lo contrario vacío"
-                        }
-                    `;
+                    Tu tarea:
+                    1. Determina con total seguridad si el documento es legítimamente un comprobante de transferencia o pago exitoso.
+                    2. Extrae obligatoriamente el número de comprobante, ID de transacción o número de operación único.
+                    3. Verifica que los datos coincidan (Monto coincidente, Destinatario correcto, y Fecha/Hora del día de hoy en curso).
+                    
+                    Responde estrictamente en formato JSON con la siguiente estructura, sin agregar texto extra, formato markdown o bloques de código:
+                    {
+                        "esValido": true o false,
+                        "idTransaccion": "código extraído o vacío",
+                        "motivoRechazo": "Explicación breve y concisa en español si esValido es false, de lo contrario vacío"
+                    }
+                `;
 
-                    // Llamada utilizando la SDK oficial actual de Google
-                    const modelo = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
-                    const responseAI = await modelo.generateContent([promptValidacion, parteImagen]);
+                // Llamada utilizando la SDK oficial actual de Google
+                const modelo = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
+                const responseAI = await modelo.generateContent([promptValidacion, parteImagen]);
 
-                    const respuestaTexto = responseAI.response.text().trim();
-                    const jsonLimpio = respuestaTexto.replace(/^```json/, '').replace(/```$/, '').trim();
-                    const resultadoIA = JSON.parse(jsonLimpio);
+                const respuestaTexto = responseAI.response.text().trim();
+                const jsonLimpio = respuestaTexto.replace(/^```json/, '').replace(/```$/, '').trim();
+                const resultadoIA = JSON.parse(jsonLimpio);
 
-                    console.log("-> Auditoría IA realizada:", resultadoIA);
+                console.log("-> Auditoría IA realizada:", resultadoIA);
 
-                    if (!resultadoIA.esValido) {
+                if (!resultadoIA.esValido) {
+                    return res.status(400).json({ 
+                        ok: false, 
+                        mensaje: `Comprobante rechazado: ${resultadoIA.motivoRechazo || 'Verifique que la imagen corresponda al pago exacto, destino y fecha del día de hoy.'}` 
+                    });
+                }
+
+                console.log(`✓ Pago verificado exitosamente por IA. ID Operación: ${resultadoIA.idTransaccion}`);
+
+                // 🛑 CONTROL DE DUPLICADO AUTOMÁTICO CONTRA GOOGLE SHEETS
+                if (resultadoIA.idTransaccion && resultadoIA.idTransaccion !== "vacío" && sheetScriptUrl) {
+                    
+                    // Mandamos el ID a la única función de Google Apps Script para que verifique y guarde de una sola vez
+                    const googleRes = await fetch(sheetScriptUrl, {
+                        method: 'POST',
+                        body: JSON.stringify({ idTransaccion: resultadoIA.idTransaccion }),
+                        headers: { 'Content-Type': 'application/json' }
+                    });
+                    
+                    const googleJson = await googleRes.json();
+                    console.log("-> Respuesta de Google Sheets:", googleJson);
+
+                    // Si el Apps Script determinó que ya existía, cortamos el proceso acá y alertamos al cliente
+                    if (googleJson.status === "duplicate") {
+                        console.log(`❌ Intento de fraude o duplicado bloqueado. ID: ${resultadoIA.idTransaccion}`);
                         return res.status(400).json({ 
                             ok: false, 
-                            mensaje: `Comprobante rechazado: ${resultadoIA.motivoRechazo || 'Verifique que la imagen corresponda al pago exacto, destino y fecha del día de hoy.'}` 
+                            mensaje: 'Comprobante rechazado: Este comprobante de pago ya fue utilizado en un pedido anterior. Operación duplicada.' 
                         });
                     }
 
-                    console.log(`✓ Pago verificado exitosamente por IA. ID Operación: ${resultadoIA.idTransaccion}`);
-
-                    // 🛑 AQUÍ EL BLOQUEO: CONTROL DE DUPLICADO CONTRA GOOGLE DRIVE
-                    if (resultadoIA.idTransaccion && resultadoIA.idTransaccion !== "vacío" && sheetScriptUrl) {
-                        
-                        // 1. Preguntamos a la App Script si ya vio ese ID
-                        const checkRes = await fetch(sheetScriptUrl, {
-                            method: 'POST',
-                            body: JSON.stringify({ action: 'check', idTransaccion: resultadoIA.idTransaccion }),
-                            headers: { 'Content-Type': 'application/json' }
-                        });
-                        const checkJson = await checkRes.json();
-
-                        // 2. Si ya existía en la planilla, cortamos el pedido acá
-                        if (checkJson.existe) {
-                            return res.status(400).json({ 
-                                ok: false, 
-                                mensaje: 'Comprobante rechazado: Este comprobante de pago ya fue utilizado en un pedido anterior. Operación duplicada.' 
-                            });
-                        }
-
-                        // 3. Si no existía, lo registramos para que nadie más pueda usarlo
-                        await fetch(sheetScriptUrl, {
-                            method: 'POST',
-                            body: JSON.stringify({ action: 'save', idTransaccion: resultadoIA.idTransaccion }),
-                            headers: { 'Content-Type': 'application/json' }
-                        });
-
+                    if (googleJson.status === "success") {
                         console.log(`✓ ID guardado con éxito en la planilla.`);
                     }
-
-                } catch (errErrorAI) {
-                    console.error("Error crítico procesando con Gemini o la Planilla:", errErrorAI);
-                    // Dejamos pasar si algo falla externamente para no trabar la venta
                 }
             }
         }
@@ -213,7 +205,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                             </tr>
                             <tr>
                                 <td align="center" style="background-color: #FDFBF7; padding: 28px 20px; border-top: 1px solid #F5F0E6; font-size: 13px; color: #777777;">
-                                    <p style="margin: 0 0 4px 0; font-weight: bold; color: #2C2520; letter-spacing: 0.3px;">Mafalda's Chipa Factory</p>
+                                    <p style="margin: 0 0 4px 0; font-weight: bold; color: #2C2520; letter-spacing: 0.3px;">Mafalda's Tipa Factory</p>
                                     <p style="margin: 0 0 12px 0; font-weight: 300;">Roldán, Santa Fe, Argentina</p>
                                     <p style="margin: 0; font-size: 12px; color: #999999; font-weight: 300;">Ante cualquier duda inmediata, podes mandar un e-mail a chipa.mafalda@gmail.com o contactanos vía WhatsApp al <strong>+54 341 3 525720</strong>.</p>
                                 </td>
