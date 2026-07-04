@@ -26,14 +26,32 @@ const FABRICA_LAT = -32.898;  // Latitud de la fábrica en Roldán
 const FABRICA_LON = -60.884;  // Longitud de la fábrica en Roldán
 
 const MINIMO_KG_NACIONAL = 20; // Piso de kilos combinados para envíos largos
-const LIMITE_KM_NACIONAL = 40; // Límite para considerarse envío local
+const LIMITE_KM_NACIONAL = 30; // Límite para considerarse envío local (Actualizado a 30km)
 
+// 🗺️ TODAS LAS PROVINCIAS CON VALORES DE PRUEBA (A ajustar cuando definas el transporte)
 const TARIFAS_NACIONALES_FRIO = {
     "buenos_aires": 4500,
+    "catamarca": 5500,
+    "chaco": 5200,
+    "chubut": 7500,
     "cordoba": 4000,
-    "santa_fe_interior": 3000, 
-    "mendoza": 6000,
+    "corrientes": 4800,
     "entre_rios": 3800,
+    "formosa": 5800,
+    "jujuy": 6800,
+    "la_pampa": 5000,
+    "la_rioja": 5500,
+    "mendoza": 6000,
+    "misiones": 5800,
+    "neuquen": 7000,
+    "rio_negro": 7200,
+    "salta": 6500,
+    "san_juan": 5800,
+    "san_luis": 5200,
+    "santa_cruz": 8500,
+    "santa_fe_interior": 3000, // Recordá que Rosario/Roldán caen en radio local (costo 0)
+    "santiago_del_estero": 5000,
+    "tierra_del_fuego": 9500,
     "tucuman": 6500
 };
 
@@ -96,9 +114,9 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
         }
 
         // 🚛 3. EVALUACIÓN COMBINADA DE REGLAS DE ENVÍO
-        const esLocalidadCercana = (cliente.ciudad.toLowerCase() === 'roldan' || cliente.ciudad.toLowerCase() === 'rosario' || cliente.ciudad.toLowerCase() === 'funes');
+        const esLocalidadCercana = (cliente.ciudad.toLowerCase() === 'roldan' || cliente.ciudad.toLowerCase() === 'rosario' || cliente.ciudad.toLowerCase() === 'funes' || cliente.ciudad.toLowerCase() === 'san jeronimo sud' || cliente.ciudad.toLowerCase() === 'carcaraña' || cliente.ciudad.toLowerCase() === 'zavalla' || cliente.ciudad.toLowerCase() === 'san lorenzo' || cliente.ciudad.toLowerCase() === 'granadero baigorria' || cliente.ciudad.toLowerCase() === 'ricardone' || cliente.ciudad.toLowerCase() === 'ibarlucea' || cliente.ciudad.toLowerCase() === 'capitan bermudez' || cliente.ciudad.toLowerCase() === 'fisherton' || cliente.ciudad.toLowerCase() === 'perez');
         
-        // Determinamos si califica como envío nacional (Ya sea porque el mapa dio > 40km o porque falló el mapa pero NO es de las ciudades locales)
+        // Determinamos si califica como envío nacional (Ya sea porque el mapa dio > 30km o porque falló el mapa pero NO es de las ciudades locales)
         const esEnvioNacional = (sePudoGeolocalizar && distanciaDelCliente > LIMITE_KM_NACIONAL) || (!sePudoGeolocalizar && !esLocalidadCercana);
 
         if (esEnvioNacional) {
@@ -113,6 +131,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
             }
 
             // CAPA 2: Asignamos la tarifa fija correspondiente a la Provincia seleccionada
+            // El .replace(/ /g, "_") se asegura de que si viene "La Pampa" busque "la_pampa"
             const provinciaKey = cliente.provincia.toLowerCase().trim().replace(/ /g, "_");
             const tarifaProvincia = TARIFAS_NACIONALES_FRIO[provinciaKey];
 
@@ -293,7 +312,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                     </table>
                                     ${req.file ? `
                                     <div style="background-color: #EBF7EE; border: 1px solid #D1EAD6; border-radius: 8px; padding: 12px 16px; margin-bottom: 28px; color: #1E5128; font-size: 13.5px; font-weight: 500;">
-                                        ✓ Captura del comprobante de pago vinculada, auditada por sistema y adjuntada correctamente a este correo.
+                                        ✓ Captura del comprobante de pago vinculada, auditada por systema y adjuntada correctamente a este correo.
                                     </div>` : ''}
                                     <p style="margin: 0 0 10px 0; color: #2C2520; font-size: 14px; font-weight: bold;">¿Cómo sigue tu pedido?</p>
                                     <p style="margin: 0; color: #555555; font-size: 14px; line-height: 1.6; font-weight: 300;">
