@@ -19,6 +19,37 @@ const ai = aiToken ? new GoogleGenerativeAI(aiToken) : null;
 // URL de tu Apps Script de Google Sheets cargada desde Render
 const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL;
 
+// ==========================================
+// ⚙️ CONFIGURACIÓN DE ENVÍOS (MAPA + TABLA DE PROVINCIAS)
+// ==========================================
+const FABRICA_LAT = -32.898;  // Latitud de la fábrica en Roldán
+const FABRICA_LON = -60.884;  // Longitud de la fábrica en Roldán
+
+const MINIMO_KG_NACIONAL = 20; // Piso de kilos combinados para envíos largos
+const LIMITE_KM_NACIONAL = 40; // Límite para considerarse envío local
+
+const TARIFAS_NACIONALES_FRIO = {
+    "buenos_aires": 4500,
+    "cordoba": 4000,
+    "santa_fe_interior": 3000, 
+    "mendoza": 6000,
+    "entre_rios": 3800,
+    "tucuman": 6500
+};
+
+// Función auxiliar matemática para calcular distancia real (Fórmula Haversine)
+function calcularDistanciaKm(lat1, lon1, lat2, lon2) {
+    const R = 6371; 
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+}
+// ==========================================
+
 // CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria para procesarla
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
@@ -33,6 +64,74 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
             return res.status(400).json({ ok: false, mensaje: 'Datos del pedido incompletos.' });
         }
 
+        // 📦 1. CÁLCULO DE KILOS COMBINADOS DEL CARRITO (Suma todas las variedades)
+        let pesoTotalPedido = 0;
+        pedido.forEach(item => {
+            pesoTotalPedido += parseFloat(item.kilos || 0); 
+        });
+
+        let costoEnvio = 0;
+        let distanciaDelCliente = 0;
+        let sePudoGeolocalizar = false;
+
+        // 🗺️ 2. CAPA 1: INTENTAR GEOLOCALIZAR POR MAPA
+        try {
+            const direccionBusqueda = `${cliente.direccion}, ${cliente.ciudad}, ${cliente.provincia}, Argentina`;
+            const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(direccionBusqueda)}&limit=1`, {
+                headers: { 'User-Agent': 'MafaldasChipaFactoryWeb' }
+            });
+            const geoData = await geoRes.json();
+
+            if (geoData && geoData.length > 0) {
+                const clienteLat = parseFloat(geoData[0].lat);
+                const clienteLon = parseFloat(geoData[0].lon);
+                distanciaDelCliente = calcularDistanciaKm(FABRICA_LAT, FABRICA_LON, clienteLat, clienteLon);
+                sePudoGeolocalizar = true;
+                console.log(`-> Mapa online. Distancia calculada: ${distanciaDelCliente.toFixed(1)} km.`);
+            } else {
+                console.log("⚠️ No se pudo geolocalizar la dirección exacta. Se activará el respaldo por Provincia.");
+            }
+        } catch (geoErr) {
+            console.error("Error consultando OpenStreetMap:", geoErr);
+        }
+
+        // 🚛 3. EVALUACIÓN COMBINADA DE REGLAS DE ENVÍO
+        const esLocalidadCercana = (cliente.ciudad.toLowerCase() === 'roldan' || cliente.ciudad.toLowerCase() === 'rosario' || cliente.ciudad.toLowerCase() === 'funes');
+        
+        // Determinamos si califica como envío nacional (Ya sea porque el mapa dio > 40km o porque falló el mapa pero NO es de las ciudades locales)
+        const esEnvioNacional = (sePudoGeolocalizar && distanciaDelCliente > LIMITE_KM_NACIONAL) || (!sePudoGeolocalizar && !esLocalidadCercana);
+
+        if (esEnvioNacional) {
+            console.log(`-> Control de Envío Nacional Activado. Validando kilaje combinado...`);
+            
+            // Validamos el piso de 20kg obligatorios para el interior
+            if (pesoTotalPedido < MINIMO_KG_NACIONAL) {
+                return res.status(400).json({ 
+                    ok: false, 
+                    mensaje: `Para envíos nacionales o de larga distancia con cadena de frío, la compra mínima combinada es de ${MINIMO_KG_NACIONAL} kg. Actualmente tenés ${pesoTotalPedido.toFixed(1)} kg en tu carrito.` 
+                });
+            }
+
+            // CAPA 2: Asignamos la tarifa fija correspondiente a la Provincia seleccionada
+            const provinciaKey = cliente.provincia.toLowerCase().trim().replace(/ /g, "_");
+            const tarifaProvincia = TARIFAS_NACIONALES_FRIO[provinciaKey];
+
+            if (tarifaProvincia === undefined) {
+                return res.status(400).json({ 
+                    ok: false, 
+                    mensaje: `Por el momento no disponemos de logística automatizada para la provincia de ${cliente.provincia}. Por favor, comunicate por WhatsApp para coordinar un transporte externo.` 
+                });
+            }
+
+            costoEnvio = tarifaProvincia;
+        } else {
+            console.log(`-> Entrega en radio local certificada. Libre de mínimos de kilaje.`);
+            costoEnvio = 0; 
+        }
+
+        // El total real final que el cliente debió transferir (Productos + Flete)
+        const totalConEnvio = parseFloat(total) + costoEnvio;
+
         // ==========================================
         // 🔥 MOTOR DE VALIDACIÓN CON IA (GEMINI) + ANTI-DUPLICADOS
         // ==========================================
@@ -44,7 +143,6 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
             if (!ai) {
                 console.error("⚠️ Alerta: GEMINI_API_KEY no configurada en Render. Se saltea validación de IA.");
             } else {
-                // Convertimos el buffer de Multer al formato estructurado que pide Google
                 const parteImagen = {
                     inlineData: {
                         data: req.file.buffer.toString("base64"),
@@ -52,7 +150,6 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                     },
                 };
 
-                // Conseguimos la fecha actual en la zona horaria de Argentina para comparar
                 const fechaHoyArg = new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
 
                 const promptValidacion = `
@@ -60,7 +157,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                     Analiza detalladamente esta imagen de comprobante de pago electrónico proveniente de cualquier banco o billetera virtual.
                     
                     Datos de control esperados:
-                    - Monto esperado: ${total} (Verifica que coincida numéricamente con los pesos impresos).
+                    - Monto esperado: ${totalConEnvio} (Verifica que coincida numéricamente con los pesos impresos en el comprobante e incluya el flete si corresponde).
                     - Destinatario válido: Debe tener como destino a Franco Tomassoni, o los alias "mafalda.chipa" o "chipa.mafalda".
                     - Fecha de hoy en Argentina: ${fechaHoyArg} (El comprobante debe ser de hoy o como máximo del día anterior).
 
@@ -77,7 +174,6 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                     }
                 `;
 
-                // Llamada utilizando la SDK oficial actual de Google
                 const modelo = ai.getGenerativeModel({ model: 'gemini-2.5-flash' });
                 const responseAI = await modelo.generateContent([promptValidacion, parteImagen]);
 
@@ -98,8 +194,6 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
 
                 // 🛑 CONTROL DE DUPLICADO AUTOMÁTICO CONTRA GOOGLE SHEETS
                 if (resultadoIA.idTransaccion && resultadoIA.idTransaccion !== "vacío" && sheetScriptUrl) {
-                    
-                    // Mandamos el ID a la única función de Google Apps Script para que verifique y guarde de una sola vez
                     const googleRes = await fetch(sheetScriptUrl, {
                         method: 'POST',
                         body: JSON.stringify({ idTransaccion: resultadoIA.idTransaccion }),
@@ -109,7 +203,6 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                     const googleJson = await googleRes.json();
                     console.log("-> Respuesta de Google Sheets:", googleJson);
 
-                    // Si el Apps Script determinó que ya existía, cortamos el proceso acá y alertamos al cliente
                     if (googleJson.status === "duplicate") {
                         console.log(`❌ Intento de fraude o duplicado bloqueado. ID: ${resultadoIA.idTransaccion}`);
                         return res.status(400).json({ 
@@ -168,7 +261,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                 <td style="padding: 40px 35px;">
                                     <h2 style="margin: 0 0 16px 0; color: #2C2520; font-size: 22px; font-weight: bold;">¡Hola, ${cliente.razonSocial}!</h2>
                                     <p style="margin: 0 0 28px 0; color: #555555; font-size: 15px; line-height: 1.6; font-weight: 300;">
-                                        Recibimos tu solicitud de pedido mayorista correctamente. Nuestro equipo ya está validando el stock de fábrica para preparar tu orden y despacharla respetando estrictamente la cadena de frío.
+                                        Recibimos tu solicitud de pedido mayorista correctamente. Nuestro equipo ya está validating el stock de fábrica para preparar tu orden y despacharla respetando estrictamente la cadena de frío.
                                     </p>
                                     <div style="background-color: #F5F0E6; border-radius: 14px; padding: 22px; margin-bottom: 28px;">
                                         <h3 style="margin: 0 0 14px 0; color: #E65C00; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px;">Resumen de Compra (${numeroOrden})</h3>
@@ -182,14 +275,19 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                             <tbody>
                                                 ${filasProductos}
                                                 <tr>
-                                                    <td style="padding-top: 16px; font-size: 15px; font-weight: bold; color: #2C2520;">Total Estimado:</td>
-                                                    <td style="padding-top: 16px; font-size: 22px; font-weight: 900; color: #E65C00; text-align: right;">${total}</td>
+                                                    <td style="padding-top: 14px; font-size: 13px; color: #777777;">Costo de Envío:</td>
+                                                    <td style="padding-top: 14px; font-size: 13px; color: #2C2520; text-align: right;">${costoEnvio > 0 ? `$${costoEnvio}` : 'Gratis / Radio Local'}</td>
+                                                </tr>
+                                                <tr>
+                                                    <td style="padding-top: 8px; font-size: 15px; font-weight: bold; color: #2C2520;">Total Final Facturado:</td>
+                                                    <td style="padding-top: 8px; font-size: 22px; font-weight: 900; color: #E65C00; text-align: right;">$${totalConEnvio}</td>
                                                 </tr>
                                             </tbody>
                                         </table>
                                     </div>
                                     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 28px; font-size: 14px; color: #444444; line-height: 1.6; border-left: 3px solid #F5F0E6; padding-left: 14px;">
                                         <tr><td><strong>Dirección de Entrega:</strong> ${cliente.direccion}, ${cliente.ciudad} (CP: ${cliente.cp})</td></tr>
+                                        ${sePudoGeolocalizar ? `<tr><td style="padding-top: 4px;"><strong>Distancia Estimada:</strong> ${distanciaDelCliente.toFixed(1)} km</td></tr>` : ''}
                                         <tr><td style="padding-top: 4px;"><strong>Forma de Pago:</strong> ${cliente.pago.toUpperCase()}</td></tr>
                                         ${cliente.notes ? `<tr><td style="padding-top: 10px; font-style: italic; color: #777777;"><strong>Notas adjuntas:</strong> "${cliente.notes}"</td></tr>` : ''}
                                     </table>
@@ -205,7 +303,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                             </tr>
                             <tr>
                                 <td align="center" style="background-color: #FDFBF7; padding: 28px 20px; border-top: 1px solid #F5F0E6; font-size: 13px; color: #777777;">
-                                    <p style="margin: 0 0 4px 0; font-weight: bold; color: #2C2520; letter-spacing: 0.3px;">Mafalda's Tipa Factory</p>
+                                    <p style="margin: 0 0 4px 0; font-weight: bold; color: #2C2520; letter-spacing: 0.3px;">Mafalda's Chipa Factory</p>
                                     <p style="margin: 0 0 12px 0; font-weight: 300;">Roldán, Santa Fe, Argentina</p>
                                     <p style="margin: 0; font-size: 12px; color: #999999; font-weight: 300;">Ante cualquier duda inmediata, podes mandar un e-mail a chipa.mafalda@gmail.com o contactanos vía WhatsApp al <strong>+54 341 3 525720</strong>.</p>
                                 </td>
