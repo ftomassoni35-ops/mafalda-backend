@@ -20,52 +20,10 @@ const ai = aiToken ? new GoogleGenerativeAI(aiToken) : null;
 const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL;
 
 // ==========================================
-// ⚙️ CONFIGURACIÓN DE ENVÍOS (MAPA + TABLA DE PROVINCIAS)
+// ⚙️ CONFIGURACIÓN DE ENVÍOS (REGLAS SANTA FE)
 // ==========================================
-const FABRICA_LAT = -32.898;  // Latitud de la fábrica en Roldán
-const FABRICA_LON = -60.884;  // Longitud de la fábrica en Roldán
-
-const MINIMO_KG_NACIONAL = 20; // Piso de kilos combinados para envíos largos
-const LIMITE_KM_NACIONAL = 30; // Límite para considerarse envío local (Actualizado a 30km)
-
-// 🗺️ TODAS LAS PROVINCIAS CON VALORES DE PRUEBA (A ajustar cuando definas el transporte)
-const TARIFAS_NACIONALES_FRIO = {
-    "buenos_aires": 4500,
-    "catamarca": 5500,
-    "chaco": 5200,
-    "chubut": 7500,
-    "cordoba": 4000,
-    "corrientes": 4800,
-    "entre_rios": 3800,
-    "formosa": 5800,
-    "jujuy": 6800,
-    "la_pampa": 5000,
-    "la_rioja": 5500,
-    "mendoza": 6000,
-    "misiones": 5800,
-    "neuquen": 7000,
-    "rio_negro": 7200,
-    "salta": 6500,
-    "san_juan": 5800,
-    "san_luis": 5200,
-    "santa_cruz": 8500,
-    "santa_fe_interior": 3000, // Recordá que Rosario/Roldán caen en radio local (costo 0)
-    "santiago_del_estero": 5000,
-    "tierra_del_fuego": 9500,
-    "tucuman": 6500
-};
-
-// Función auxiliar matemática para calcular distancia real (Fórmula Haversine)
-function calcularDistanciaKm(lat1, lon1, lat2, lon2) {
-    const R = 6371; 
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = 
-        Math.sin(dLat/2) * Math.sin(dLat/2) +
-        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon/2) * Math.sin(dLon/2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-    return R * c;
-}
+const COSTO_ENVIO_ESTANDAR = 3000;
+const MINIMO_KG_ENVIO_GRATIS = 10;
 // ==========================================
 
 // CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria para procesarla
@@ -89,63 +47,33 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
         });
 
         let costoEnvio = 0;
-        let distanciaDelCliente = 0;
-        let sePudoGeolocalizar = false;
+        const ciudadCliente = cliente.ciudad.toLowerCase().trim();
+        const provinciaCliente = cliente.provincia.toLowerCase().trim();
 
-        // 🗺️ 2. CAPA 1: INTENTAR GEOLOCALIZAR POR MAPA
-        try {
-            const direccionBusqueda = `${cliente.direccion}, ${cliente.ciudad}, ${cliente.provincia}, Argentina`;
-            const geoRes = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(direccionBusqueda)}&limit=1`, {
-                headers: { 'User-Agent': 'MafaldasChipaFactoryWeb' }
-            });
-            const geoData = await geoRes.json();
-
-            if (geoData && geoData.length > 0) {
-                const clienteLat = parseFloat(geoData[0].lat);
-                const clienteLon = parseFloat(geoData[0].lon);
-                distanciaDelCliente = calcularDistanciaKm(FABRICA_LAT, FABRICA_LON, clienteLat, clienteLon);
-                sePudoGeolocalizar = true;
-                console.log(`-> Mapa online. Distancia calculada: ${distanciaDelCliente.toFixed(1)} km.`);
-            } else {
-                console.log("⚠️ No se pudo geolocalizar la dirección exacta. Se activará el respaldo por Provincia.");
-            }
-        } catch (geoErr) {
-            console.error("Error consultando OpenStreetMap:", geoErr);
-        }
-
-        // 🚛 3. EVALUACIÓN COMBINADA DE REGLAS DE ENVÍO
-        const esLocalidadCercana = (cliente.ciudad.toLowerCase() === 'roldan' || cliente.ciudad.toLowerCase() === 'rosario' || cliente.ciudad.toLowerCase() === 'funes' || cliente.ciudad.toLowerCase() === 'san jeronimo sud' || cliente.ciudad.toLowerCase() === 'carcaraña' || cliente.ciudad.toLowerCase() === 'zavalla' || cliente.ciudad.toLowerCase() === 'san lorenzo' || cliente.ciudad.toLowerCase() === 'granadero baigorria' || cliente.ciudad.toLowerCase() === 'ricardone' || cliente.ciudad.toLowerCase() === 'ibarlucea' || cliente.ciudad.toLowerCase() === 'capitan bermudez' || cliente.ciudad.toLowerCase() === 'fisherton' || cliente.ciudad.toLowerCase() === 'perez');
-        
-        // Determinamos si califica como envío nacional (Ya sea porque el mapa dio > 30km o porque falló el mapa pero NO es de las ciudades locales)
-        const esEnvioNacional = (sePudoGeolocalizar && distanciaDelCliente > LIMITE_KM_NACIONAL) || (!sePudoGeolocalizar && !esLocalidadCercana);
-
-        if (esEnvioNacional) {
-            console.log(`-> Control de Envío Nacional Activado. Validando kilaje combinado...`);
+        // 🚛 2. EVALUACIÓN DE REGLAS DE ENVÍO (ÚNICAMENTE SANTA FE)
+        if (provinciaCliente.includes('santa fe') || provinciaCliente.includes('santa_fe')) {
             
-            // Validamos el piso de 20kg obligatorios para el interior
-            if (pesoTotalPedido < MINIMO_KG_NACIONAL) {
-                return res.status(400).json({ 
-                    ok: false, 
-                    mensaje: `Para envíos nacionales o de larga distancia con cadena de frío, la compra mínima combinada es de ${MINIMO_KG_NACIONAL} kg. Actualmente tenés ${pesoTotalPedido.toFixed(1)} kg en tu carrito.` 
-                });
+            if (ciudadCliente === 'roldan') {
+                // Roldán siempre tiene envío sin costo
+                costoEnvio = 0;
+                console.log(`-> Envío local (Roldán): Costo $0`);
+            } else {
+                // Resto de Santa Fe: Gratis desde 10kg, sino $3000
+                if (pesoTotalPedido >= MINIMO_KG_ENVIO_GRATIS) {
+                    costoEnvio = 0;
+                    console.log(`-> Envío Santa Fe (${cliente.ciudad}): Gratis por superar los 10kg (${pesoTotalPedido}kg)`);
+                } else {
+                    costoEnvio = COSTO_ENVIO_ESTANDAR;
+                    console.log(`-> Envío Santa Fe (${cliente.ciudad}): Costo $3000 (Pedido de ${pesoTotalPedido}kg)`);
+                }
             }
 
-            // CAPA 2: Asignamos la tarifa fija correspondiente a la Provincia seleccionada
-            // El .replace(/ /g, "_") se asegura de que si viene "La Pampa" busque "la_pampa"
-            const provinciaKey = cliente.provincia.toLowerCase().trim().replace(/ /g, "_");
-            const tarifaProvincia = TARIFAS_NACIONALES_FRIO[provinciaKey];
-
-            if (tarifaProvincia === undefined) {
-                return res.status(400).json({ 
-                    ok: false, 
-                    mensaje: `Por el momento no disponemos de logística automatizada para la provincia de ${cliente.provincia}. Por favor, comunicate por WhatsApp para coordinar un transporte externo.` 
-                });
-            }
-
-            costoEnvio = tarifaProvincia;
         } else {
-            console.log(`-> Entrega en radio local certificada. Libre de mínimos de kilaje.`);
-            costoEnvio = 0; 
+            // Bloqueo por si ingresa un pedido de otra provincia por error
+            return res.status(400).json({ 
+                ok: false, 
+                mensaje: 'Por el momento únicamente realizamos envíos dentro de la provincia de Santa Fe.' 
+            });
         }
 
         // El total real final que el cliente debió transferir (Productos + Flete)
@@ -280,7 +208,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                 <td style="padding: 40px 35px;">
                                     <h2 style="margin: 0 0 16px 0; color: #2C2520; font-size: 22px; font-weight: bold;">¡Hola, ${cliente.razonSocial}!</h2>
                                     <p style="margin: 0 0 28px 0; color: #555555; font-size: 15px; line-height: 1.6; font-weight: 300;">
-                                        Recibimos tu solicitud de pedido mayorista correctamente. Nuestro equipo ya está validating el stock de fábrica para preparar tu orden y despacharla respetando estrictamente la cadena de frío.
+                                        Recibimos tu solicitud de pedido mayorista correctamente. Nuestro equipo ya está validando el stock de fábrica para preparar tu orden y despacharla respetando estrictamente la cadena de frío.
                                     </p>
                                     <div style="background-color: #F5F0E6; border-radius: 14px; padding: 22px; margin-bottom: 28px;">
                                         <h3 style="margin: 0 0 14px 0; color: #E65C00; font-size: 13px; font-weight: bold; text-transform: uppercase; letter-spacing: 0.8px;">Resumen de Compra (${numeroOrden})</h3>
@@ -295,7 +223,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                                 ${filasProductos}
                                                 <tr>
                                                     <td style="padding-top: 14px; font-size: 13px; color: #777777;">Costo de Envío:</td>
-                                                    <td style="padding-top: 14px; font-size: 13px; color: #2C2520; text-align: right;">${costoEnvio > 0 ? `$${costoEnvio}` : 'Gratis / Radio Local'}</td>
+                                                    <td style="padding-top: 14px; font-size: 13px; color: #2C2520; text-align: right;">${costoEnvio > 0 ? `$${costoEnvio}` : 'Sin Costo'}</td>
                                                 </tr>
                                                 <tr>
                                                     <td style="padding-top: 8px; font-size: 15px; font-weight: bold; color: #2C2520;">Total Final Facturado:</td>
@@ -306,13 +234,12 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                     </div>
                                     <table border="0" cellpadding="0" cellspacing="0" width="100%" style="margin-bottom: 28px; font-size: 14px; color: #444444; line-height: 1.6; border-left: 3px solid #F5F0E6; padding-left: 14px;">
                                         <tr><td><strong>Dirección de Entrega:</strong> ${cliente.direccion}, ${cliente.ciudad} (CP: ${cliente.cp})</td></tr>
-                                        ${sePudoGeolocalizar ? `<tr><td style="padding-top: 4px;"><strong>Distancia Estimada:</strong> ${distanciaDelCliente.toFixed(1)} km</td></tr>` : ''}
                                         <tr><td style="padding-top: 4px;"><strong>Forma de Pago:</strong> ${cliente.pago.toUpperCase()}</td></tr>
                                         ${cliente.notes ? `<tr><td style="padding-top: 10px; font-style: italic; color: #777777;"><strong>Notas adjuntas:</strong> "${cliente.notes}"</td></tr>` : ''}
                                     </table>
                                     ${req.file ? `
                                     <div style="background-color: #EBF7EE; border: 1px solid #D1EAD6; border-radius: 8px; padding: 12px 16px; margin-bottom: 28px; color: #1E5128; font-size: 13.5px; font-weight: 500;">
-                                        ✓ Captura del comprobante de pago vinculada, auditada por systema y adjuntada correctamente a este correo.
+                                        ✓ Captura del comprobante de pago vinculada, auditada por el sistema y adjuntada correctamente a este correo.
                                     </div>` : ''}
                                     <p style="margin: 0 0 10px 0; color: #2C2520; font-size: 14px; font-weight: bold;">¿Cómo sigue tu pedido?</p>
                                     <p style="margin: 0; color: #555555; font-size: 14px; line-height: 1.6; font-weight: 300;">
@@ -324,7 +251,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                 <td align="center" style="background-color: #FDFBF7; padding: 28px 20px; border-top: 1px solid #F5F0E6; font-size: 13px; color: #777777;">
                                     <p style="margin: 0 0 4px 0; font-weight: bold; color: #2C2520; letter-spacing: 0.3px;">Mafalda's Chipa Factory</p>
                                     <p style="margin: 0 0 12px 0; font-weight: 300;">Roldán, Santa Fe, Argentina</p>
-                                    <p style="margin: 0; font-size: 12px; color: #999999; font-weight: 300;">Ante cualquier duda inmediata, podes mandar un e-mail a chipa.mafalda@gmail.com o contactanos vía WhatsApp al <strong>+54 341 3 525720</strong>.</p>
+                                    <p style="margin: 0; font-size: 12px; color: #999999; font-weight: 300;">Ante cualquier duda inmediata, podés mandar un e-mail a chipa.mafalda@gmail.com o contactanos vía WhatsApp al <strong>+54 341 3 525720</strong>.</p>
                                 </td>
                             </tr>
                         </table>
