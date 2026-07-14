@@ -22,7 +22,7 @@ const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL;
 // ==========================================
 // ⚙️ CONFIGURACIÓN DE ENVÍOS (REGLAS SANTA FE)
 // ==========================================
-const COSTO_ENVIO_ESTANDAR = 0;
+const COSTO_ENVIO_ESTANDAR = 3000;
 const MINIMO_KG_ENVIO_GRATIS = 10;
 // ==========================================
 
@@ -64,7 +64,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                     console.log(`-> Envío Santa Fe (${cliente.ciudad}): Gratis por superar los 10kg (${pesoTotalPedido}kg)`);
                 } else {
                     costoEnvio = COSTO_ENVIO_ESTANDAR;
-                    console.log(`-> Envío Santa Fe (${cliente.ciudad}): Costo $0 (Pedido de ${pesoTotalPedido}kg)`);
+                    console.log(`-> Envío Santa Fe (${cliente.ciudad}): Costo $3000 (Pedido de ${pesoTotalPedido}kg)`);
                 }
             }
 
