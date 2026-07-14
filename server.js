@@ -23,7 +23,7 @@ const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL;
 // ⚙️ CONFIGURACIÓN DE ENVÍOS (REGLAS SANTA FE)
 // ==========================================
 const COSTO_ENVIO_ESTANDAR = 3000;
-const MINIMO_KG_ENVIO_GRATIS = 10;
+const MINIMO_KG_ENVIO_GRATIS = 2.5;
 // ==========================================
 
 // CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria para procesarla
@@ -58,10 +58,10 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                 costoEnvio = 0;
                 console.log(`-> Envío local (Roldán): Costo $0`);
             } else {
-                // Resto de Santa Fe: Gratis desde 10kg, sino $3000
+                // Resto de Santa Fe: Gratis desde 2.5kg, sino $3000
                 if (pesoTotalPedido >= MINIMO_KG_ENVIO_GRATIS) {
                     costoEnvio = 0;
-                    console.log(`-> Envío Santa Fe (${cliente.ciudad}): Gratis por superar los 10kg (${pesoTotalPedido}kg)`);
+                    console.log(`-> Envío Santa Fe (${cliente.ciudad}): Gratis por superar los 2.5kg (${pesoTotalPedido}kg)`);
                 } else {
                     costoEnvio = COSTO_ENVIO_ESTANDAR;
                     console.log(`-> Envío Santa Fe (${cliente.ciudad}): Costo $3000 (Pedido de ${pesoTotalPedido}kg)`);
