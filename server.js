@@ -20,10 +20,9 @@ const ai = aiToken ? new GoogleGenerativeAI(aiToken) : null;
 const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL;
 
 // ==========================================
-// ⚙️ CONFIGURACIÓN DE ENVÍOS (REGLAS SANTA FE)
+// ⚙️ CONFIGURACIÓN DE ENVÍOS (ENVÍO GRATIS)
 // ==========================================
-const COSTO_ENVIO_ESTANDAR = 3000;
-const MINIMO_KG_ENVIO_GRATIS = 10;
+const COSTO_ENVIO_ESTANDAR = 0;
 // ==========================================
 
 // CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria para procesarla
@@ -46,28 +45,14 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
             pesoTotalPedido += parseFloat(item.kilos || 0); 
         });
 
-        let costoEnvio = 0;
+        let costoEnvio = COSTO_ENVIO_ESTANDAR; // $0
         const ciudadCliente = cliente.ciudad.toLowerCase().trim();
         const provinciaCliente = cliente.provincia.toLowerCase().trim();
 
         // 🚛 2. EVALUACIÓN DE REGLAS DE ENVÍO (ÚNICAMENTE SANTA FE)
         if (provinciaCliente.includes('santa fe') || provinciaCliente.includes('santa_fe')) {
-            
-            if (ciudadCliente === 'roldan') {
-                // Roldán siempre tiene envío sin costo
-                costoEnvio = 0;
-                console.log(`-> Envío local (Roldán): Costo $0`);
-            } else {
-                // Resto de Santa Fe: Gratis desde 10kg, sino $3000
-                if (pesoTotalPedido >= MINIMO_KG_ENVIO_GRATIS) {
-                    costoEnvio = 0;
-                    console.log(`-> Envío Santa Fe (${cliente.ciudad}): Gratis por superar los 10kg (${pesoTotalPedido}kg)`);
-                } else {
-                    costoEnvio = COSTO_ENVIO_ESTANDAR;
-                    console.log(`-> Envío Santa Fe (${cliente.ciudad}): Costo $3000 (Pedido de ${pesoTotalPedido}kg)`);
-                }
-            }
-
+            // Envío $0 bonificado para toda la provincia de Santa Fe
+            console.log(`-> Envío bonificado a $0 para ${cliente.ciudad} (${pesoTotalPedido}kg)`);
         } else {
             // Bloqueo por si ingresa un pedido de otra provincia por error
             return res.status(400).json({ 
@@ -76,7 +61,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
             });
         }
 
-        // El total real final que el cliente debió transferir (Productos + Flete)
+        // El total real final que el cliente debió transferir (Productos + Envío $0)
         const totalConEnvio = parseFloat(total) + costoEnvio;
 
         // ==========================================
@@ -100,11 +85,11 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                 const fechaHoyArg = new Date().toLocaleDateString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires' });
 
                 const promptValidacion = `
-                    Actúa como un systema experto de auditoría financiera para la fábrica "Mafalda's Chipa". 
+                    Actúa como un sistema experto de auditoría financiera para la fábrica "Mafalda's Chipa". 
                     Analiza detalladamente esta imagen de comprobante de pago electrónico proveniente de cualquier banco o billetera virtual.
                     
                     Datos de control esperados:
-                    - Monto esperado: ${totalConEnvio} (Verifica que coincida numéricamente con los pesos impresos en el comprobante e incluya el flete si corresponde).
+                    - Monto esperado: ${totalConEnvio} (Verifica que coincida numéricamente con los pesos impresos en el comprobante).
                     - Destinatario válido: Debe tener como destino a Franco Tomassoni, o los alias "mafalda.chipa" o "chipa.mafalda".
                     - Fecha de hoy en Argentina: ${fechaHoyArg} (El comprobante debe ser de hoy o como máximo del día anterior).
 
@@ -223,7 +208,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                                                 ${filasProductos}
                                                 <tr>
                                                     <td style="padding-top: 14px; font-size: 13px; color: #777777;">Costo de Envío:</td>
-                                                    <td style="padding-top: 14px; font-size: 13px; color: #2C2520; text-align: right;">${costoEnvio > 0 ? `$${costoEnvio}` : 'Sin Costo'}</td>
+                                                    <td style="padding-top: 14px; font-size: 13px; color: #2C2520; text-align: right; font-weight: bold;">Sin Costo (Gratis)</td>
                                                 </tr>
                                                 <tr>
                                                     <td style="padding-top: 8px; font-size: 15px; font-weight: bold; color: #2C2520;">Total Final Facturado:</td>
