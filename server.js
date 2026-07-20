@@ -23,9 +23,8 @@ const sheetScriptUrl = process.env.GOOGLE_SHEET_SCRIPT_URL;
 // ⚙️ CONFIGURACIÓN DE ENVÍOS (ENVÍO GRATIS)
 // ==========================================
 const COSTO_ENVIO_ESTANDAR = 0;
-// ==========================================
 
-// CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria para procesarla
+// CONFIGURACIÓN DE MULTER: Guarda la foto temporalmente en memoria
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
@@ -39,7 +38,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
             return res.status(400).json({ ok: false, mensaje: 'Datos del pedido incompletos.' });
         }
 
-        // 📦 1. CÁLCULO DE KILOS COMBINADOS DEL CARRITO (Suma todas las variedades)
+        // 📦 1. CÁLCULO DE KILOS COMBINADOS DEL CARRITO
         let pesoTotalPedido = 0;
         pedido.forEach(item => {
             pesoTotalPedido += parseFloat(item.kilos || 0); 
@@ -49,19 +48,16 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
         const ciudadCliente = cliente.ciudad.toLowerCase().trim();
         const provinciaCliente = cliente.provincia.toLowerCase().trim();
 
-        // 🚛 2. EVALUACIÓN DE REGLAS DE ENVÍO (ÚNICAMENTE SANTA FE)
+        // 🚛 2. EVALUACIÓN DE REGLAS DE ENVÍO
         if (provinciaCliente.includes('santa fe') || provinciaCliente.includes('santa_fe')) {
-            // Envío $0 bonificado para toda la provincia de Santa Fe
             console.log(`-> Envío bonificado a $0 para ${cliente.ciudad} (${pesoTotalPedido}kg)`);
         } else {
-            // Bloqueo por si ingresa un pedido de otra provincia por error
             return res.status(400).json({ 
                 ok: false, 
                 mensaje: 'Por el momento únicamente realizamos envíos dentro de la provincia de Santa Fe.' 
             });
         }
 
-        // El total real final que el cliente debió transferir (Productos + Envío $0)
         const totalConEnvio = parseFloat(total) + costoEnvio;
 
         // ==========================================
@@ -124,33 +120,40 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
 
                 console.log(`✓ Pago verificado exitosamente por IA. ID Operación: ${resultadoIA.idTransaccion}`);
 
-                // 🛑 CONTROL DE DUPLICADO AUTOMÁTICO CONTRA GOOGLE SHEETS
+                // 🛑 CONTROL DE DUPLICADO AUTOMÁTICO CONTRA GOOGLE SHEETS (PROTEGIDO CON TRY/CATCH)
                 if (resultadoIA.idTransaccion && resultadoIA.idTransaccion !== "vacío" && sheetScriptUrl) {
-                    const googleRes = await fetch(sheetScriptUrl, {
-                        method: 'POST',
-                        body: JSON.stringify({ idTransaccion: resultadoIA.idTransaccion }),
-                        headers: { 'Content-Type': 'application/json' }
-                    });
-                    
-                    const googleJson = await googleRes.json();
-                    console.log("-> Respuesta de Google Sheets:", googleJson);
-
-                    if (googleJson.status === "duplicate") {
-                        console.log(`❌ Intento de fraude o duplicado bloqueado. ID: ${resultadoIA.idTransaccion}`);
-                        return res.status(400).json({ 
-                            ok: false, 
-                            mensaje: 'Comprobante rechazado: Este comprobante de pago ya fue utilizado en un pedido anterior. Operación duplicada.' 
+                    try {
+                        const googleRes = await fetch(sheetScriptUrl, {
+                            method: 'POST',
+                            body: JSON.stringify({ idTransaccion: resultadoIA.idTransaccion }),
+                            headers: { 'Content-Type': 'application/json' },
+                            redirect: 'follow'
                         });
-                    }
 
-                    if (googleJson.status === "success") {
-                        console.log(`✓ ID guardado con éxito en la planilla.`);
+                        const googleJson = await googleRes.json();
+                        console.log("-> Respuesta de Google Sheets:", googleJson);
+
+                        if (googleJson.status === "duplicate") {
+                            console.log(`❌ Intento de fraude o duplicado bloqueado. ID: ${resultadoIA.idTransaccion}`);
+                            return res.status(400).json({ 
+                                ok: false, 
+                                mensaje: 'Comprobante rechazado: Este comprobante de pago ya fue utilizado en un pedido anterior. Operación duplicada.' 
+                            });
+                        }
+
+                        if (googleJson.status === "success") {
+                            console.log(`✓ ID guardado con éxito en la planilla.`);
+                        }
+                    } catch (errorSheets) {
+                        console.error("⚠️ Error comunicándose con Google Sheets (se continúa con el pedido):", errorSheets.message);
                     }
                 }
             }
         }
-        // ==========================================
 
+        // ==========================================
+        // ✉️ GENERACIÓN DE ORDEN Y ENVÍO DE EMAIL
+        // ==========================================
         const numeroOrden = 'ORD-' + Math.floor(Math.random() * 90000 + 10000);
 
         let filasProductos = '';
@@ -247,14 +250,21 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
         </html>
         `;
 
-        await resend.emails.send({
-            from: 'Mafalda Chipa Factory <ventas@mafaldachipa.com>', 
-            to: cliente.email, 
-            bcc: 'chipa.mafalda@gmail.com', 
-            subject: `Confirmación de Pedido - ${cliente.razonSocial}`,
-            attachments: attachments, 
-            html: emailHtml 
-        });
+        // ENVÍO DE MAIL CON RESEND
+        try {
+            console.log("-> Enviando correo a través de Resend...");
+            const resData = await resend.emails.send({
+                from: 'Mafalda Chipa Factory <ventas@mafaldachipa.com>', 
+                to: cliente.email, 
+                bcc: 'chipa.mafalda@gmail.com', 
+                subject: `Confirmación de Pedido - ${cliente.razonSocial}`,
+                attachments: attachments, 
+                html: emailHtml 
+            });
+            console.log("✓ Correo enviado con éxito. Resend ID:", resData);
+        } catch (errorResend) {
+            console.error("❌ ERROR CRÍTICO AL ENVIAR CORREO CON RESEND:", errorResend);
+        }
 
         return res.status(200).json({
             ok: true,
