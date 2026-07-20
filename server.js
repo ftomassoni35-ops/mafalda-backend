@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 // CONFIGURACIÓN DE APIS
-const resend = new Resend('re_7MSbhW1r_5o8MDHUFfgVsGDpEZcHPSmUz');
+const resend = new Resend('process.env.RESEND_API_KEY');
 
 // Inicializamos la IA de Google usando la clase oficial correcta
 const aiToken = process.env.GEMINI_API_KEY;
