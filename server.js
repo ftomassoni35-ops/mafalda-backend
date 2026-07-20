@@ -10,7 +10,7 @@ app.use(cors());
 app.use(express.json());
 
 // CONFIGURACIÓN DE APIS
-const resend = new Resend('re_itW6VYbD_8ydBgWibvDkjwp9AoLMnNrwU');
+const resend = new Resend('re_7MSbhW1r_5o8MDHUFfgVsGDpEZcHPSmUz');
 
 // Inicializamos la IA de Google usando la clase oficial correcta
 const aiToken = process.env.GEMINI_API_KEY;
@@ -104,7 +104,7 @@ app.post('/api/pedido', upload.single('comprobante'), async (req, res) => {
                     `;
 
                     // Usamos gemini-1.5-flash para evitar caídas por saturación
-                    const modelo = ai.getGenerativeModel({ model: 'gemini-2.0-flash' });
+                    const modelo = ai.getGenerativeModel({ model: 'gemini-1.5-flash' });
                     const responseAI = await modelo.generateContent([promptValidacion, parteImagen]);
 
                     const respuestaTexto = responseAI.response.text().trim();
